@@ -1,0 +1,103 @@
+services:
+  # === Next.js Web Service ===
+  - type: web
+    name: animforge-web
+    runtime: node
+    plan: standard
+    buildCommand: npm install && npm run db:push && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: animforge-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false  # Upstash Redis URL (rediss://default:xxx@xxx.upstash.io:6379)
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: GUMROAD_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHANNEL_ID
+        value: "@AnimForgeChannel"
+      - key: BLENDER_WORKER_URL
+        fromService:
+          name: blender-worker
+          type: web
+          property: hostport
+      - key: FREE_CREDITS
+        value: "3"
+      - key: REFERRAL_BONUS
+        value: "2"
+    healthCheckPath: /
+    autoDeploy: true
+    disk:
+      name: animforge-data
+      mountPath: /data
+      sizeGB: 50
+
+  # === BullMQ Worker (runs alongside Next.js) ===
+  - type: worker
+    name: animforge-queue-worker
+    runtime: node
+    plan: standard
+    buildCommand: npm install
+    startCommand: npx tsx lib/queue/worker.ts
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: animforge-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false  # Upstash Redis URL
+      - key: HF_TOKEN
+        sync: false
+      - key: BLENDER_WORKER_URL
+        fromService:
+          name: blender-worker
+          type: web
+          property: hostport
+    disk:
+      name: worker-data
+      mountPath: /data
+      sizeGB: 50
+    scaling:
+      minInstances: 1
+      maxInstances: 5
+      targetCPUPercent: 70
+
+  # === Python Blender Worker ===
+  - type: web
+    name: blender-worker
+    runtime: docker
+    plan: standard-plus
+    dockerfilePath: ./workers/blender/Dockerfile
+    dockerContext: ./workers/blender
+    envVars:
+      - key: PORT
+        value: "10000"
+    healthCheckPath: /health
+    disk:
+      name: blender-data
+      mountPath: /data
+      sizeGB: 50
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetCPUPercent: 70
+
+databases:
+  - name: animforge-db
+    plan: standard
+    databaseName: animforge
+    postgresMajorVersion: "16"
+
+# Redis: используем Upstash (бесплатный tier).
+# Создайте базу на upstash.com и вставьте REDIS_URL в env vars каждого сервиса.
