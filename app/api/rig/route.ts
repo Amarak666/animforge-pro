@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { getOrCreateUser, deductCredit, createJob, updateJob } from "@/lib/db/queries";
-import { generationQueue, type GenerationJobData } from "@/lib/queue/jobs";
+import { getGenerationQueue, type GenerationJobData } from "@/lib/queue/jobs";
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     prompt,
     duration,
   };
-  await generationQueue.add("generate", jobData, { jobId: job.id });
+  await getGenerationQueue().add("generate", jobData, { jobId: job.id });
 
   return NextResponse.json({ jobId: job.id });
 }
