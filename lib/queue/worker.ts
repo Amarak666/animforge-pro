@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { getRedis } from "./redis";
+import { getRedisConfig } from "./redis";
 import { updateJob } from "../db/queries";
 import { refundCredit } from "../db/queries";
 import { rigModel } from "../hf/unirig";
@@ -57,7 +57,7 @@ const worker = new Worker<GenerationJobData>(
     }
   },
   {
-    connection: getRedis(),
+    connection: getRedisConfig(),
     concurrency: 2,
     limiter: { max: 5, duration: 60_000 },
   }

@@ -1,8 +1,8 @@
 import { Queue } from "bullmq";
-import { getRedis } from "./redis";
+import { getRedisConfig } from "./redis";
 
 export const generationQueue = new Queue("generation", {
-  connection: getRedis(),
+  connection: getRedisConfig(),
   defaultJobOptions: {
     attempts: 2,
     backoff: { type: "exponential", delay: 5000 },

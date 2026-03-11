@@ -27,7 +27,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.39.0",
-    "ioredis": "^5.4.2",
     "lucide-react": "^0.469.0",
     "next": "^15.1.0",
     "postgres": "^3.4.5",
