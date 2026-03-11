@@ -1,129 +1,158 @@
-# AnimForge Pro — Инструкция по деплою на Render
-
-## Требования
-
-- GitHub-репозиторий с загруженным кодом проекта
-- Аккаунты: Render, Clerk, Hugging Face, Gumroad, Telegram (бот), **Upstash** (для Redis)
-
----
-
-## Шаг 1: Создание Redis на Upstash
-
-Render больше не предлагает managed Redis на всех планах. Используем **Upstash** — бесплатный tier, полностью совместим с BullMQ.
-
-1. Зайдите на [console.upstash.com](https://console.upstash.com)
-2. Нажмите **Create Database**
-3. Имя: `animforge-redis`
-4. Регион: выберите ближайший к вашим Render-сервисам (например, `eu-west-1` если Render в Frankfurt)
-5. TLS: **включён** (по умолчанию)
-6. После создания скопируйте **Redis URL** — он выглядит так:
-   ```
-   rediss://default:AbCdEfG123@eu1-redis.upstash.io:6379
-   ```
-7. Этот URL нужно будет вставить как `REDIS_URL` в env vars каждого сервиса на Render (шаг 3)
-
-> Бесплатный план Upstash: 10 000 команд/день, 256 МБ. Для MVP этого достаточно. При масштабировании переходите на Pay-as-you-go ($0.2/100K команд).
-
----
-
-## Шаг 2: Деплой через Blueprint
-
-1. В дашборде Render → **New** → **Blueprint**
-2. Подключите ваш GitHub-репозиторий
-3. Выберите ветку `main` — Render автоматически прочитает `render.yaml`
-4. Будут созданы следующие сервисы:
-   - `animforge-web` — Next.js (фронтенд + API)
-   - `animforge-queue-worker` — BullMQ воркер (обработка очередей)
-   - `blender-worker` — Python + headless Blender (Docker)
-   - `animforge-db` — PostgreSQL база данных
-
----
-
-## Шаг 3: Настройка переменных окружения
-
-В каждом сервисе установите секретные переменные (отмечены `sync: false` в render.yaml):
-
-| Переменная | Где взять |
-|---|---|
-| `REDIS_URL` | Upstash Console → ваша база → Redis URL (шаг 1) |
-| `CLERK_SECRET_KEY` | Дашборд Clerk → API Keys |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Дашборд Clerk → API Keys |
-| `HF_TOKEN` | huggingface.co → Settings → Access Tokens |
-| `GUMROAD_WEBHOOK_SECRET` | Настройки продукта на Gumroad |
-| `TELEGRAM_BOT_TOKEN` | Telegram → @BotFather → /newbot |
-
----
-
-## Шаг 4: Настройка Gumroad (подписки)
-
-1. Создайте Membership-продукт на Gumroad ($8/месяц или $80/год)
-2. В настройках продукта → раздел **Webhooks (Ping)**
-3. Добавьте URL: `https://animforge-web.onrender.com/api/gumroad-webhook`
-4. Gumroad будет отправлять события: `subscription_created`, `subscription_updated`, `subscription_ended`, `cancellation`
-
----
-
-## Шаг 5: Настройка Telegram-бота
-
-1. Создайте бота через @BotFather в Telegram
-2. Добавьте бота **администратором** в канал @AnimForgeChannel
-3. Боту нужно разрешение на вызов `getChatMember` (есть по умолчанию у админов)
-4. Создайте сам канал @AnimForgeChannel, если его ещё нет
-
----
-
-## Шаг 6: Настройка Clerk (аутентификация)
-
-1. Создайте приложение на clerk.com
-2. Укажите redirect URL на ваш домен Render (например `https://animforge-web.onrender.com`)
-3. Включите нужные провайдеры входа (Email, Google, GitHub и т.д.)
-
----
-
-## Шаг 7: Миграция базы данных
-
-После первого деплоя откройте Shell в сервисе `animforge-web` на Render:
-
-```bash
-npm run db:push
-```
-
-Это создаст таблицы `users` и `jobs` в PostgreSQL.
-
----
+# AnimForge Pro — Инструкция по деплою (бесплатный стек)
 
 ## Архитектура
 
+| Сервис | Платформа | Tier |
+|---|---|---|
+| Next.js (фронтенд + API) | **Vercel** | Free |
+| PostgreSQL | **Supabase** | Free (500 МБ) |
+| Redis (очереди) | **Upstash** | Free (10K команд/день) |
+| BullMQ Worker | **Render** | Free Worker |
+| Blender Worker | **Render** | Free Docker |
+
 ```
-Пользователь → Next.js (Render Web Service)
-                 ├→ Clerk Auth (аутентификация)
-                 ├→ PostgreSQL (Render DB)
+Пользователь → Vercel (Next.js)
+                 ├→ Clerk Auth
+                 ├→ Supabase PostgreSQL
                  ├→ Upstash Redis → BullMQ очередь
-                 │           └→ Queue Worker
-                 │                ├→ UniRig Space (Hugging Face) — риггинг
-                 │                ├→ HY-Motion Space (Hugging Face) — анимация
-                 │                └→ Blender Worker (Render Docker) — сглаживание + физика
-                 ├→ Gumroad Webhook (управление подписками)
-                 └→ Telegram Bot API (проверка подписки на канал)
+                 │           └→ Queue Worker (Render)
+                 │                ├→ UniRig (HF Space) — риггинг
+                 │                ├→ HY-Motion (HF Space) — анимация
+                 │                └→ Blender Worker (Render Docker)
+                 ├→ Gumroad Webhook (подписки)
+                 └→ Telegram Bot API (проверка канала)
 ```
 
----
+## Требования
 
-## Масштабирование
-
-- Queue-воркеры: автоскейлинг 1–5 инстансов при CPU > 70%
-- Blender-воркеры: автоскейлинг 1–3 инстанса при CPU > 70%
-- Все сервисы связаны через приватную сеть Render (private networking)
-- Redis: Upstash (внешний, бесплатный tier — 10K команд/день, масштабируется по необходимости)
-- Хранилище файлов: Render Disks по 50 ГБ на каждый сервис
+- GitHub-репозиторий с кодом (уже есть: `Amarak666/animforge-pro`)
+- Аккаунты: Vercel, Supabase, Upstash, Render, Clerk, Hugging Face, Gumroad, Telegram
 
 ---
 
-## Бизнес-логика (кратко)
+## Шаг 1: Supabase (база данных) ✅ ГОТОВО
+
+Таблицы `users` и `jobs` уже созданы через миграцию.
+
+Для подключения:
+1. Зайдите в [supabase.com](https://supabase.com) → ваш проект → **Settings** → **Database**
+2. Скопируйте **Connection string** (Transaction Pooler, порт 6543)
+3. Замените `[YOUR-PASSWORD]` на пароль от БД
+4. Это ваш `DATABASE_URL`
+
+---
+
+## Шаг 2: Upstash Redis (очереди)
+
+1. Зайдите на [console.upstash.com](https://console.upstash.com)
+2. **Create Database** → имя: `animforge-redis`
+3. Регион: ближайший (например `eu-west-1`)
+4. Скопируйте **Redis URL**:
+   ```
+   rediss://default:AbCdEfG123@eu1-redis.upstash.io:6379
+   ```
+5. Это ваш `REDIS_URL`
+
+---
+
+## Шаг 3: Vercel (фронтенд + API)
+
+1. Зайдите на [vercel.com](https://vercel.com) → **Add New Project**
+2. Импортируйте репо `Amarak666/animforge-pro`
+3. Framework: **Next.js** (определится автоматически)
+4. Добавьте **Environment Variables**:
+
+| Переменная | Значение |
+|---|---|
+| `DATABASE_URL` | Connection string из Supabase (шаг 1) |
+| `REDIS_URL` | Redis URL из Upstash (шаг 2) |
+| `CLERK_SECRET_KEY` | Дашборд Clerk → API Keys |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Дашборд Clerk → API Keys |
+| `HF_TOKEN` | huggingface.co → Settings → Access Tokens |
+| `GUMROAD_WEBHOOK_SECRET` | Настройки продукта Gumroad |
+| `TELEGRAM_BOT_TOKEN` | Telegram → @BotFather → /newbot |
+| `TELEGRAM_CHANNEL_ID` | `@AnimForgeChannel` |
+| `BLENDER_WORKER_URL` | URL blender-worker на Render (шаг 4) |
+| `NEXT_PUBLIC_APP_URL` | `https://animforge-pro.vercel.app` |
+| `FREE_CREDITS` | `3` |
+| `REFERRAL_BONUS` | `2` |
+
+5. Нажмите **Deploy**
+
+---
+
+## Шаг 4: Render (воркеры)
+
+Создайте **два отдельных сервиса** (не Blueprint!):
+
+### 4a. Blender Worker (Docker)
+
+1. Render → **New** → **Web Service**
+2. Подключите репо `Amarak666/animforge-pro`
+3. **Docker** → Root Directory: `workers/blender`
+4. Plan: **Free**
+5. Env vars:
+   - `PORT` = `10000`
+6. После деплоя скопируйте URL (например `https://blender-worker-xxxx.onrender.com`)
+7. Вставьте этот URL как `BLENDER_WORKER_URL` в Vercel (шаг 3)
+
+### 4b. Queue Worker (Background Worker)
+
+1. Render → **New** → **Background Worker**
+2. Подключите репо `Amarak666/animforge-pro`
+3. Runtime: **Node**
+4. Build Command: `npm install`
+5. Start Command: `npx tsx lib/queue/worker.ts`
+6. Plan: **Free**
+7. Env vars:
+   - `DATABASE_URL` = Connection string из Supabase
+   - `REDIS_URL` = Redis URL из Upstash
+   - `HF_TOKEN` = Токен Hugging Face
+   - `BLENDER_WORKER_URL` = URL из шага 4a
+
+---
+
+## Шаг 5: Clerk (аутентификация)
+
+1. Создайте приложение на [clerk.com](https://clerk.com)
+2. Укажите домен: `https://animforge-pro.vercel.app`
+3. Включите провайдеры входа (Email, Google, GitHub)
+4. Скопируйте ключи в env vars Vercel (шаг 3)
+
+---
+
+## Шаг 6: Gumroad (подписки)
+
+1. Создайте Membership-продукт ($8/месяц)
+2. Webhooks → добавьте URL: `https://animforge-pro.vercel.app/api/gumroad-webhook`
+3. Gumroad отправит события: `subscription_created`, `subscription_updated`, `subscription_ended`, `cancellation`
+
+---
+
+## Шаг 7: Telegram-бот
+
+1. Создайте бота через @BotFather
+2. Создайте канал @AnimForgeChannel
+3. Добавьте бота **администратором** канала
+4. Вставьте токен бота в `TELEGRAM_BOT_TOKEN`
+
+---
+
+## Бизнес-логика
 
 - **Регистрация** → +3 бесплатных кредита (+2 по реферальной ссылке)
-- **Генерация** (риг + анимация + обработка) = -1 кредит
-- **Ошибка на любом шаге** → кредит возвращается автоматически
-- **0 кредитов** → блокировка до оформления подписки через Gumroad
+- **Генерация** = -1 кредит
+- **Ошибка** → кредит возвращается автоматически
+- **0 кредитов** → нужна подписка через Gumroad
 - **Подписчики** → безлимитные генерации
-- **Экспорт** (скачивание .glb/.fbx/.mp4) → только после подписки на Telegram-канал
+- **Экспорт** → только после подписки на Telegram-канал
+
+---
+
+## Ограничения бесплатного tier
+
+- Render free воркеры **засыпают** после 15 мин неактивности (~30 сек холодный старт)
+- Supabase free: пауза после 1 недели неактивности, 500 МБ лимит
+- Upstash free: 10 000 команд/день
+- Vercel free: 100 ГБ bandwidth, 6000 мин сборки/месяц
+- Для MVP достаточно, для продакшена — апгрейд Render до Starter ($7/мес)
